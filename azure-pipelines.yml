@@ -1,0 +1,69 @@
+trigger:
+  - main # Pipeline tự động chạy khi push code vào branch main (CI)
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  # ================= STAGE 1: BUILD (CI) =================
+  - stage: Build
+    displayName: "Build and Package Application"
+    jobs:
+      - job: BuildJob
+        steps:
+          - script: |
+              echo "Kích hoạt CI: Đang đóng gói ứng dụng..."
+            displayName: "Run Build Scripts"
+
+          # Nén code thành file zip
+          - task: ArchiveFiles@2
+            displayName: "Archive files"
+            inputs:
+              rootFolderOrFile: "$(System.DefaultWorkingDirectory)"
+              includeRootFolder: false
+              archiveType: "zip"
+              archiveFile: "$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip"
+              replaceExistingArchive: true
+
+          # Đẩy file zip lên bộ lưu trữ của Azure Pipeline
+          - task: PublishBuildArtifacts@1
+            displayName: "Publish Artifacts"
+            inputs:
+              PathtoPublish: "$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip"
+              ArtifactName: "drop"
+
+  # ================= STAGE 2: DEPLOY (CD) =================
+  - stage: Deploy
+    displayName: "Deploy to Azure Web App"
+    dependsOn: Build
+    condition: succeeded() # Chỉ Deploy khi Build thành công
+    jobs:
+      - deployment: DeployJob
+        environment: "production"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                # Tải file zip đã build ở Stage 1 xuống
+                - task: DownloadBuildArtifacts@0
+                  inputs:
+                    buildType: "current"
+                    downloadType: "single"
+                    artifactName: "drop"
+                    downloadPath: "$(System.ArtifactsDirectory)"
+
+                # Task đẩy code lên Azure Web App
+                - task: AzureRmWebAppDeployment@4
+                  displayName: "Azure Web App Deploy"
+                  inputs:
+                    ConnectionType: "AzureRM"
+                    
+                    # 1. Điền ĐÚNG TÊN Service Connection (Manual) mà bạn chuẩn bị tạo ở Project Settings
+                    azureSubscription: "Azure-DevOps-Service-Connection" 
+                    
+                    appType: "webAppLinux"
+                    
+                    # 2. Thay đổi tên này thành ĐÚNG TÊN Web App bạn đã tạo trên Azure Portal ở Bước 1
+                    WebAppName: "demo-cicd-pipeline-123" 
+                    
+                    package: "$(System.ArtifactsDirectory)/drop/$(Build.BuildId).zip"
